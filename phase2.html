@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Repaint — M2 點擊分割</title>
+<style>
+  body { margin: 0; background: #111; font-family: sans-serif; overflow: hidden; }
+  #cam { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; }
+  /* canvas 疊在 video 正上方,同尺寸;pointer-events:none 讓點擊穿透到下層 */
+  #overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
+  #startBtn {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    padding: 16px 40px; font-size: 18px; font-weight: bold;
+    background: #FF9EC3; color: #23306B; border: none; border-radius: 999px;
+  }
+  #status {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    color: #fff; background: rgba(0,0,0,.55); padding: 6px 14px;
+    border-radius: 999px; font-size: 13px; max-width: 88vw; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<video id="cam" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+<button id="startBtn">開始 Repaint</button>
+<div id="status">按下按鈕啟動相機</div>
+
+<script type="module">
+// type="module" 才能用 import 語法載入 MediaPipe
+import { InteractiveSegmenter, FilesetResolver } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById('cam');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const status = document.getElementById('status');
+
+let segmenter = null;
+
+// ---------- 1. 啟動相機(M1 原封不動) ----------
+startBtn.addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }, audio: false
+    });
+    video.srcObject = stream;
+    startBtn.style.display = 'none';
+    status.textContent = '模型下載中…(第一次較久,請稍等)';
+    await loadModel();          // 相機開好後才載模型
+    status.textContent = '✅ 就緒!點畫面上任何東西';
+  } catch (err) {
+    status.textContent = '失敗:' + err.name + ' — ' + err.message;
+  }
+});
+
+// ---------- 2. 載入 MediaPipe 分割模型 ----------
+async function loadModel() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  segmenter = await InteractiveSegmenter.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite"
+    },
+    outputCategoryMask: true
+  });
+}
+
+// ---------- 3. 點擊 → 分割 → 畫遮罩 ----------
+document.body.addEventListener('click', (e) => {
+  if (!segmenter || !video.videoWidth) return;   // 還沒就緒就不動作
+
+  // 把螢幕座標換算成「影像中的相對位置(0~1)」
+  // 注意:object-fit:cover 會裁切,這裡先用簡化版換算,PoC 夠用
+  const x = e.clientX / window.innerWidth;
+  const y = e.clientY / window.innerHeight;
+
+  const t0 = performance.now();
+  segmenter.segment(video, { keypoint: { x, y } }, (result) => {
+    const ms = (performance.now() - t0).toFixed(0);
+    drawMask(result.categoryMask);
+    result.close();                               // 用完釋放記憶體
+    status.textContent = `分割完成,耗時 ${ms} ms(點別處可重試)`;
+  });
+});
+
+// ---------- 4. 把遮罩畫到 canvas ----------
+function drawMask(mask) {
+  const w = mask.width, h = mask.height;
+  canvas.width = w; canvas.height = h;            // canvas 跟遮罩同尺寸
+  const data = mask.getAsUint8Array();            // 每個像素:255=你點的物體
+  const img = ctx.createImageData(w, h);
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] > 0) {                            // 屬於該物體的像素
+      img.data[i*4 + 0] = 255;                    // R
+      img.data[i*4 + 1] = 255;                    // G
+      img.data[i*4 + 2] = 255;                    // B
+      img.data[i*4 + 3] = 110;                    // A:半透明
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+</script>
+</body>
+</html>
