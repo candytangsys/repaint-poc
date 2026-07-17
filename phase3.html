@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Repaint — M2 點擊分割</title>
+<title>Repaint — M3 點擊分割</title>
 <style>
   body { margin: 0; background: #111; font-family: sans-serif; overflow: hidden; }
   #cam { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; }
   /* canvas 疊在 video 正上方,同尺寸;pointer-events:none 讓點擊穿透到下層 */
-  #overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
+  #overlay { position: fixed; pointer-events: none; } 
   #startBtn {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     padding: 16px 40px; font-size: 18px; font-weight: bold;
@@ -97,8 +97,9 @@ document.body.addEventListener('click', (e) => {
 
   // 把螢幕座標換算成「影像中的相對位置(0~1)」
   // 注意:object-fit:cover 會裁切,這裡先用簡化版換算,PoC 夠用
-  const x = e.clientX / window.innerWidth;
-  const y = e.clientY / window.innerHeight;
+    const g = alignCanvas();
+    const x = (e.clientX + g.offX) / g.dispW;
+    const y = (e.clientY + g.offY) / g.dispH;
 
   const t0 = performance.now();
   segmenter.segment(video, { keypoint: { x, y } }, (result) => {
@@ -108,6 +109,20 @@ document.body.addEventListener('click', (e) => {
     status.textContent = `分割完成,耗時 ${ms} ms(點別處可重試)`;
   });
 });
+
+// 計算 video 以 cover 模式顯示時的實際幾何,讓 canvas 與點擊共用同一套座標
+function alignCanvas() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const sw = window.innerWidth, sh = window.innerHeight;
+  const scale = Math.max(sw / vw, sh / vh);   // cover = 取較大的縮放
+  const dispW = vw * scale, dispH = vh * scale;
+  const offX = (dispW - sw) / 2, offY = (dispH - sh) / 2;
+  canvas.style.width = dispW + 'px';
+  canvas.style.height = dispH + 'px';
+  canvas.style.left = -offX + 'px';
+  canvas.style.top  = -offY + 'px';
+  return { dispW, dispH, offX, offY };
+}
 
 // ---------- 4. 把遮罩畫到 canvas ----------
 function drawMask(mask) {
