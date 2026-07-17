@@ -119,7 +119,7 @@ function drawMask(mask) {
   const data = mask.getAsUint8Array();
   const img = ctx.createImageData(w, h);
   for (let i = 0; i < data.length; i++) {
-    if (data[i] > 0) {
+    if (data[i] === 0) {
       // Multiply:原像素 × 目標色 ÷ 255 → 暗處仍暗、亮處染色,光影保留
       img.data[i*4+0] = frame.data[i*4+0] * color[0] / 255;
       img.data[i*4+1] = frame.data[i*4+1] * color[1] / 255;
