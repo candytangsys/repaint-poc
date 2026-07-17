@@ -19,6 +19,9 @@
     color: #fff; background: rgba(0,0,0,.55); padding: 6px 14px;
     border-radius: 999px; font-size: 13px; max-width: 88vw; text-align: center;
   }
+  #palette { position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+    .sw { font-size: 22px; padding: 8px 10px; border-radius: 14px; border: none; background: rgba(255,255,255,.25); }
+    .sw.on { background: #fff; }
 </style>
 </head>
 <body>
@@ -26,6 +29,12 @@
 <video id="cam" autoplay playsinline muted></video>
 <canvas id="overlay"></canvas>
 <button id="startBtn">開始 Repaint</button>
+<div id="palette">
+  <button class="sw on" data-color="255,158,195">🩷</button>
+  <button class="sw" data-color="111,224,192">🩵</button>
+  <button class="sw" data-color="255,216,102">💛</button>
+  <button class="sw" data-color="189,227,245">🤍</button>
+</div>
 <div id="status">按下按鈕啟動相機</div>
 
 <script type="module">
@@ -40,6 +49,17 @@ const startBtn = document.getElementById('startBtn');
 const status = document.getElementById('status');
 
 let segmenter = null;
+
+let color = [255, 158, 195];   // 預設馬卡龍粉 [R,G,B]
+
+document.querySelectorAll('.sw').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();       // 關鍵!擋住點擊冒泡,不然按選單也會觸發分割
+    color = btn.dataset.color.split(',').map(Number);
+    document.querySelectorAll('.sw').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+  });
+});
 
 // ---------- 1. 啟動相機(M1 原封不動) ----------
 startBtn.addEventListener('click', async () => {
@@ -92,16 +112,21 @@ document.body.addEventListener('click', (e) => {
 // ---------- 4. 把遮罩畫到 canvas ----------
 function drawMask(mask) {
   const w = mask.width, h = mask.height;
-  canvas.width = w; canvas.height = h;            // canvas 跟遮罩同尺寸
-  const data = mask.getAsUint8Array();            // 每個像素:255=你點的物體
+  canvas.width = w; canvas.height = h;
+  // 1. 把當下的相機畫面畫進 canvas(取得原始像素)
+  ctx.drawImage(video, 0, 0, w, h);
+  const frame = ctx.getImageData(0, 0, w, h);
+  const data = mask.getAsUint8Array();
   const img = ctx.createImageData(w, h);
   for (let i = 0; i < data.length; i++) {
-    if (data[i] > 0) {                            // 屬於該物體的像素
-      img.data[i*4 + 0] = 255;                    // R
-      img.data[i*4 + 1] = 255;                    // G
-      img.data[i*4 + 2] = 255;                    // B
-      img.data[i*4 + 3] = 110;                    // A:半透明
+    if (data[i] > 0) {
+      // Multiply:原像素 × 目標色 ÷ 255 → 暗處仍暗、亮處染色,光影保留
+      img.data[i*4+0] = frame.data[i*4+0] * color[0] / 255;
+      img.data[i*4+1] = frame.data[i*4+1] * color[1] / 255;
+      img.data[i*4+2] = frame.data[i*4+2] * color[2] / 255;
+      img.data[i*4+3] = 235;   // 接近不透明,蓋住原色
     }
+    // 不屬於物體的像素 alpha 維持 0(透明),露出下面的 video
   }
   ctx.putImageData(img, 0, 0);
 }
