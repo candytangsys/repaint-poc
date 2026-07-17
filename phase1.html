@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Repaint — Phase 1</title>
+<style>
+  body { margin: 0; background: #111; font-family: sans-serif; overflow: hidden; }
+  /* 影片鋪滿螢幕,object-fit: cover 讓它像原生相機一樣填滿不變形 */
+  #cam { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; }
+  #startBtn {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    padding: 16px 40px; font-size: 18px; font-weight: bold;
+    background: #FF9EC3; color: #23306B; border: none; border-radius: 999px;
+  }
+  #status {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    color: #fff; background: rgba(0,0,0,.55); padding: 6px 14px;
+    border-radius: 999px; font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<video id="cam" autoplay playsinline muted></video>
+<button id="startBtn">開始 Repaint</button>
+<div id="status">按下按鈕啟動相機</div>
+
+<script>
+const video = document.getElementById('cam');
+const startBtn = document.getElementById('startBtn');
+const status = document.getElementById('status');
+
+startBtn.addEventListener('click', async () => {
+  try {
+    // 跟瀏覽器要相機:facingMode 'environment' = 後鏡頭
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' },
+      audio: false
+    });
+    video.srcObject = stream;      // 把串流餵給 <video>
+    startBtn.style.display = 'none';
+    status.textContent = '相機運作中 ✅(M1 完成)';
+  } catch (err) {
+    // 失敗時把錯誤顯示在畫面上,手機除錯全靠這行
+    status.textContent = '相機啟動失敗:' + err.name + ' — ' + err.message;
+  }
+});
+</script>
+</body>
+</html>
