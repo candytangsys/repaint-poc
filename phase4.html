@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Repaint — M4 完成體</title>
+<style>
+  body { margin: 0; background: #111; font-family: sans-serif; overflow: hidden; }
+  #cam { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; }
+  #overlay { position: fixed; pointer-events: none; }
+  #startBtn {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    padding: 16px 40px; font-size: 18px; font-weight: bold;
+    background: #FF9EC3; color: #23306B; border: none; border-radius: 999px;
+  }
+  #palette { position: fixed; bottom: 64px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+  .sw { font-size: 22px; padding: 8px 10px; border-radius: 14px; border: none; background: rgba(255,255,255,.25); }
+  .sw.on { background: #fff; }
+  #modeBtn {
+    position: fixed; top: 16px; right: 16px; padding: 8px 14px; font-size: 13px;
+    border: none; border-radius: 999px; background: rgba(255,255,255,.85); color: #23306B; font-weight: bold;
+  }
+  #status {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    color: #fff; background: rgba(0,0,0,.55); padding: 6px 14px;
+    border-radius: 999px; font-size: 13px; max-width: 88vw; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<video id="cam" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+<button id="startBtn">開始 Repaint</button>
+<button id="modeBtn" style="display:none">模式:單張</button>
+<div id="palette" style="display:none">
+  <button class="sw on" data-color="255,158,195">🩷</button>
+  <button class="sw" data-color="111,224,192">🩵</button>
+  <button class="sw" data-color="255,216,102">💛</button>
+  <button class="sw" data-color="189,227,245">🤍</button>
+</div>
+<div id="status">按下按鈕啟動相機</div>
+
+<script type="module">
+import { InteractiveSegmenter, FilesetResolver } from
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById('cam');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const modeBtn = document.getElementById('modeBtn');
+const status = document.getElementById('status');
+
+let segmenter = null;
+let color = [255, 158, 195];
+let continuous = false;      // 連續模式開關
+let liveTimer = null;        // setInterval 的把手
+let lastPoint = null;        // 最後一次點擊的正規化座標
+
+// ---------- 顏色選單 ----------
+document.querySelectorAll('.sw').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    color = btn.dataset.color.split(',').map(Number);
+    document.querySelectorAll('.sw').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    if (lastPoint) runSegment(lastPoint);   // 換色後立即重繪
+  });
+});
+
+// ---------- 模式切換 ----------
+modeBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  continuous = !continuous;
+  modeBtn.textContent = continuous ? '模式:連續' : '模式:單張';
+  clearInterval(liveTimer);
+  if (continuous && lastPoint) startLive();
+});
+
+// ---------- 啟動 ----------
+startBtn.addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }, audio: false
+    });
+    video.srcObject = stream;
+    startBtn.style.display = 'none';
+    status.textContent = '模型下載中…(第一次較久)';
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    segmenter = await InteractiveSegmenter.createFromOptions(vision, {
+      baseOptions: { modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/interactive_segmenter/magic_touch/float32/1/magic_touch.tflite" },
+      outputCategoryMask: true
+    });
+    modeBtn.style.display = 'block';
+    document.getElementById('palette').style.display = 'flex';
+    status.textContent = '✅ 就緒!點畫面上任何東西';
+  } catch (err) {
+    status.textContent = '失敗:' + err.name + ' — ' + err.message;
+  }
+});
+
+// ---------- cover 幾何對位 ----------
+function alignCanvas() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const sw = window.innerWidth, sh = window.innerHeight;
+  const scale = Math.max(sw / vw, sh / vh);
+  const dispW = vw * scale, dispH = vh * scale;
+  const offX = (dispW - sw) / 2, offY = (dispH - sh) / 2;
+  canvas.style.width = dispW + 'px';
+  canvas.style.height = dispH + 'px';
+  canvas.style.left = -offX + 'px';
+  canvas.style.top  = -offY + 'px';
+  return { dispW, dispH, offX, offY };
+}
+
+// ---------- 點擊 ----------
+document.body.addEventListener('click', (e) => {
+  if (!segmenter || !video.videoWidth) return;
+  const g = alignCanvas();
+  lastPoint = {
+    x: (e.clientX + g.offX) / g.dispW,
+    y: (e.clientY + g.offY) / g.dispH
+  };
+  clearInterval(liveTimer);
+  runSegment(lastPoint);
+  if (continuous) startLive();
+});
+
+function startLive() {
+  liveTimer = setInterval(() => runSegment(lastPoint), 300); // 300ms 一幀,可調
+}
+
+function runSegment(pt) {
+  const t0 = performance.now();
+  segmenter.segment(video, { keypoint: pt }, (result) => {
+    const ms = (performance.now() - t0).toFixed(0);
+    drawMask(result.categoryMask);
+    result.close();
+    status.textContent = (continuous ? '連續中 ' : '') + `耗時 ${ms} ms`;
+  });
+}
+
+// ---------- Multiply 上色 ----------
+function drawMask(mask) {
+  const w = mask.width, h = mask.height;
+  canvas.width = w; canvas.height = h;
+  ctx.drawImage(video, 0, 0, w, h);
+  const frame = ctx.getImageData(0, 0, w, h);
+  const data = mask.getAsUint8Array();
+  const img = ctx.createImageData(w, h);
+  for (let i = 0; i < data.length; i++) {
+    // 以你 phase3 實測為準:若上色區域相反,把 === 0 改成 > 0
+    if (data[i] === 0) {
+      img.data[i*4+0] = frame.data[i*4+0] * color[0] / 255;
+      img.data[i*4+1] = frame.data[i*4+1] * color[1] / 255;
+      img.data[i*4+2] = frame.data[i*4+2] * color[2] / 255;
+      img.data[i*4+3] = 235;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+</script>
+</body>
+</html>
